@@ -1,0 +1,27 @@
+{
+  "name": "stacklens",
+  "version": "0.1.0",
+  "description": "Explain, classify, and map dependencies from common project manifest files.",
+  "type": "module",
+  "bin": {
+    "stacklens": "./cli.mjs"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "analyze": "node cli.mjs",
+    "test": "node tests/analyzer.test.mjs"
+  },
+  "keywords": [
+    "dependencies",
+    "dependency-analysis",
+    "open-source",
+    "package-json",
+    "requirements",
+    "sbom"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

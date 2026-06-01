@@ -1,0 +1,16 @@
+{
+  "name": "stacklens-demo",
+  "private": true,
+  "dependencies": {
+    "axios": "^1.9.0",
+    "express": "latest",
+    "react": "^19.1.0",
+    "zod": "^3.25.36"
+  },
+  "devDependencies": {
+    "eslint": "^9.28.0",
+    "playwright": "^1.52.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

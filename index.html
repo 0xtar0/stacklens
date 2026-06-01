@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="StackLens explains and maps project dependencies from common manifest files." />
+    <title>StackLens</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23146c64'/%3E%3Cpath d='M18 20h18a10 10 0 0 1 7 17l8 8-6 6-8-8a10 10 0 0 1-17-7V20Z' fill='%23fffdf8'/%3E%3Ccircle cx='35' cy='30' r='8' fill='%23c98318'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Dependency intelligence, locally</p>
+          <h1>StackLens</h1>
+          <p class="lede">Drop manifests from a project and get a readable map of what each dependency does, where it lives, and what needs review.</p>
+        </div>
+        <div class="hero-actions" aria-label="Primary actions">
+          <button class="button primary" id="sampleButton" type="button">Load sample</button>
+          <button class="button secondary" id="clearButton" type="button">Clear</button>
+        </div>
+      </header>
+
+      <section class="drop-zone" id="dropZone">
+        <input id="fileInput" type="file" multiple accept=".json,.txt,.toml,.mod,.xml,.gradle,.kts" />
+        <div>
+          <strong>Drop manifest files here</strong>
+          <span>Supports package.json, package-lock.json, requirements.txt, pyproject.toml, Pipfile, Cargo.toml, go.mod, Gemfile, pom.xml, Gradle, and composer.json.</span>
+        </div>
+        <button class="button secondary" id="browseButton" type="button">Browse files</button>
+      </section>
+
+      <section class="dashboard" aria-live="polite">
+        <article class="metric">
+          <span>Dependencies</span>
+          <strong id="dependencyCount">0</strong>
+        </article>
+        <article class="metric">
+          <span>Ecosystems</span>
+          <strong id="ecosystemCount">0</strong>
+        </article>
+        <article class="metric">
+          <span>Risk flags</span>
+          <strong id="riskCount">0</strong>
+        </article>
+        <article class="metric">
+          <span>Files</span>
+          <strong id="fileCount">0</strong>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel controls">
+          <label class="field">
+            <span>Search</span>
+            <input id="searchInput" type="search" placeholder="react, test, auth..." />
+          </label>
+          <label class="field">
+            <span>Category</span>
+            <select id="categoryFilter">
+              <option value="">All categories</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Ecosystem</span>
+            <select id="ecosystemFilter">
+              <option value="">All ecosystems</option>
+            </select>
+          </label>
+          <div class="toggle-row">
+            <input id="riskOnly" type="checkbox" />
+            <label for="riskOnly">Only dependencies with flags</label>
+          </div>
+          <div class="export-row">
+            <button class="button secondary" id="copyMarkdown" type="button">Copy report</button>
+            <button class="button secondary" id="downloadJson" type="button">Download JSON</button>
+          </div>
+          <div class="panel-subsection">
+            <h2>Recommendations</h2>
+            <ul id="recommendations"></ul>
+          </div>
+        </aside>
+
+        <section class="panel results">
+          <div class="results-header">
+            <div>
+              <h2>Dependency Map</h2>
+              <p id="resultCaption">Load files to start analysis.</p>
+            </div>
+            <div class="view-tabs" role="tablist" aria-label="View">
+              <button class="tab active" data-view="cards" type="button">Cards</button>
+              <button class="tab" data-view="table" type="button">Table</button>
+            </div>
+          </div>
+          <div id="cardsView" class="cards-view"></div>
+          <div id="tableView" class="table-view hidden">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Version</th>
+                  <th>Scope</th>
+                  <th>Category</th>
+                  <th>Flags</th>
+                </tr>
+              </thead>
+              <tbody id="dependencyTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>
