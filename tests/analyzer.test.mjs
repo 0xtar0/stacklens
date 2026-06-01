@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { analyzeFiles, exportMarkdown } from "../src/analyzer.js";
 
 const report = analyzeFiles([
@@ -42,5 +43,73 @@ const markdown = exportMarkdown(report);
 assert.match(markdown, /StackLens Dependency Report/);
 assert.match(markdown, /express/);
 assert.match(markdown, /Recommendations/);
+
+const lockReport = analyzeFiles([
+  {
+    name: "package-lock.json",
+    content: JSON.stringify({
+      lockfileVersion: 1,
+      dependencies: {
+        lodash: {
+          version: "4.17.21",
+          dependencies: {
+            uuid: { version: "9.0.1", optional: true }
+          }
+        },
+        eslint: { version: "9.0.0", dev: true }
+      }
+    })
+  }
+]);
+
+assert.equal(lockReport.summary.dependencies, 3);
+assert.equal(lockReport.dependencies.find((dep) => dep.name === "eslint").scope, "development");
+assert.equal(lockReport.dependencies.find((dep) => dep.name === "uuid").scope, "optional");
+
+const pythonReport = analyzeFiles([
+  {
+    name: "requirements.txt",
+    content: [
+      "uvicorn[standard]==0.30.0; python_version >= '3.11'",
+      "internal-lib @ https://example.com/internal-lib-1.0.0.tar.gz",
+      "pytest~=8.3"
+    ].join("\n")
+  }
+]);
+
+assert.equal(pythonReport.dependencies.find((dep) => dep.name === "uvicorn").version, "==0.30.0");
+assert.ok(pythonReport.dependencies.find((dep) => dep.name === "internal-lib").flags.includes("remote dependency"));
+assert.ok(pythonReport.dependencies.find((dep) => dep.name === "pytest").flags.includes("tooling package in runtime scope"));
+
+const tomlReport = analyzeFiles([
+  {
+    name: "Cargo.toml",
+    content: [
+      "[dependencies]",
+      "serde = { version = \"1.0\", features = [\"derive\"] }",
+      "local-crate = { path = \"../local-crate\" }",
+      "",
+      "[dev-dependencies]",
+      "insta = \"1.39\""
+    ].join("\n")
+  }
+]);
+
+assert.equal(tomlReport.dependencies.find((dep) => dep.name === "serde").version, "1.0");
+assert.equal(tomlReport.dependencies.find((dep) => dep.name === "insta").scope, "development");
+assert.ok(tomlReport.dependencies.find((dep) => dep.name === "local-crate").flags.includes("local file dependency"));
+
+let cliError = null;
+try {
+  execFileSync(process.execPath, ["cli.mjs", "missing-manifest.json"], {
+    cwd: new URL("..", import.meta.url),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+} catch (error) {
+  cliError = error;
+}
+assert.equal(cliError?.status, 1);
+assert.match(cliError?.stderr, /Path not found: missing-manifest\.json/);
 
 console.log("analyzer tests passed");

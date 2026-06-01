@@ -8,11 +8,13 @@ StackLens turns dependency manifests into a readable dependency map. Drop in the
 
 - Browser app that runs locally with no accounts, registry calls, or telemetry.
 - Drag-and-drop analysis for `package.json`, `package-lock.json`, `requirements.txt`, `pyproject.toml`, `Pipfile`, `Cargo.toml`, `go.mod`, `Gemfile`, `pom.xml`, Gradle files, and `composer.json`.
+- Support for npm lockfile v1/v2/v3 structures, Python extras/direct URL requirements, and TOML inline dependency tables.
 - Dependency explanations using known-package profiles plus transparent name heuristics.
 - Category, ecosystem, search, and risk filters.
 - Risk flags for wildcard ranges, `latest`, remote dependencies, local file links, unpinned ranges, and tooling packages in runtime scope.
 - Markdown and JSON export from the UI.
 - Zero-dependency Node CLI for terminal and CI use.
+- Friendly CLI errors for missing paths, unsupported files, and invalid output formats.
 - MIT licensed and easy to fork.
 
 ## Quick Start

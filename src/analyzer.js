@@ -192,19 +192,23 @@ function parsePackageJson(file) {
 
 function parsePackageLock(file) {
   const json = JSON.parse(file.content);
-  const packages = json.packages || {};
   const deps = [];
-  for (const [path, meta] of Object.entries(packages)) {
-    if (!path.startsWith("node_modules/")) continue;
-    const name = path.replace(/^node_modules\//, "");
-    deps.push(makeDep({
-      name,
-      version: meta.version || "",
-      scope: meta.dev ? "development" : meta.optional ? "optional" : "locked",
-      ecosystem: "npm",
-      sourceFile: file.name,
-      direct: false
-    }));
+
+  if (json.packages && typeof json.packages === "object") {
+    for (const [path, meta] of Object.entries(json.packages)) {
+      if (!path.startsWith("node_modules/")) continue;
+      const name = path.replace(/^node_modules\//, "");
+      deps.push(makeDep({
+        name,
+        version: meta.version || "",
+        scope: meta.dev ? "development" : meta.optional ? "optional" : "locked",
+        ecosystem: "npm",
+        sourceFile: file.name,
+        direct: false
+      }));
+    }
+  } else if (json.dependencies && typeof json.dependencies === "object") {
+    walkLockDependencies(json.dependencies, deps, file.name);
   }
   return deps;
 }
@@ -227,10 +231,7 @@ function parseRequirements(file) {
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+#.*$/, "").trim())
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("-"))
-    .map((line) => {
-      const match = line.match(/^([A-Za-z0-9_.-]+)\s*(.*)$/);
-      return match ? makeDep({ name: match[1], version: match[2].trim(), scope: "runtime", ecosystem: "python", sourceFile: file.name, direct: true }) : null;
-    })
+    .map((line) => pythonSpecToDep(line, "runtime", file.name))
     .filter(Boolean);
 }
 
@@ -446,10 +447,15 @@ function tag(xml, name) {
 }
 
 function findNamedBlock(content, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`^\\s*\\[${escaped}\\]\\s*$([\\s\\S]*?)(?=^\\s*\\[|\\s*$)`, "m");
-  const match = content.match(pattern);
-  return match ? { name, body: match[1] } : null;
+  const pattern = /^\s*\[([^\]]+)\]\s*$/gm;
+  const matches = [...content.matchAll(pattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    if (matches[index][1] !== name) continue;
+    const start = matches[index].index + matches[index][0].length;
+    const end = matches[index + 1]?.index ?? content.length;
+    return { name, body: content.slice(start, end) };
+  }
+  return null;
 }
 
 function findTomlBlocks(content, prefix) {
@@ -485,9 +491,15 @@ function parseQuotedArray(body) {
 }
 
 function pythonSpecToDep(spec, scope, sourceFile) {
-  const match = spec.match(/^([A-Za-z0-9_.-]+)\s*(.*)$/);
+  const withoutMarker = spec.split(";")[0].trim();
+  const directUrl = withoutMarker.match(/^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s+@\s+(.+)$/);
+  if (directUrl) {
+    return makeDep({ name: directUrl[1], version: directUrl[2].trim(), scope, ecosystem: "python", sourceFile, direct: true });
+  }
+
+  const match = withoutMarker.match(/^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(.*)$/);
   if (!match) return null;
-  return makeDep({ name: match[1], version: match[2], scope, ecosystem: "python", sourceFile, direct: true });
+  return makeDep({ name: match[1], version: match[2].trim(), scope, ecosystem: "python", sourceFile, direct: true });
 }
 
 function parseTomlAssignments(body, scope, ecosystem, sourceFile) {
@@ -498,10 +510,37 @@ function parseTomlAssignments(body, scope, ecosystem, sourceFile) {
     const [rawName, ...rest] = clean.split("=");
     const name = rawName.trim().replace(/^["']|["']$/g, "");
     if (["python", "ruby", "node"].includes(name.toLowerCase())) continue;
-    const version = rest.join("=").trim().replace(/^["']|["']$/g, "");
+    const version = normalizeTomlVersion(rest.join("=").trim());
     deps.push(makeDep({ name, version, scope, ecosystem, sourceFile, direct: true }));
   }
   return deps;
+}
+
+function walkLockDependencies(tree, deps, sourceFile) {
+  for (const [name, meta] of Object.entries(tree)) {
+    deps.push(makeDep({
+      name,
+      version: meta.version || "",
+      scope: meta.dev ? "development" : meta.optional ? "optional" : "locked",
+      ecosystem: "npm",
+      sourceFile,
+      direct: false
+    }));
+    if (meta.dependencies && typeof meta.dependencies === "object") {
+      walkLockDependencies(meta.dependencies, deps, sourceFile);
+    }
+  }
+}
+
+function normalizeTomlVersion(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("{")) {
+    const version = trimmed.match(/\bversion\s*=\s*["']([^"']+)["']/);
+    const git = trimmed.match(/\bgit\s*=\s*["']([^"']+)["']/);
+    const path = trimmed.match(/\bpath\s*=\s*["']([^"']+)["']/);
+    return version?.[1] || git?.[1] || (path ? `file:${path[1]}` : trimmed);
+  }
+  return trimmed.replace(/^["']|["']$/g, "");
 }
 
 function escapePipe(value) {

@@ -19,6 +19,7 @@ const SUPPORTED = new Set([
 ]);
 
 const args = process.argv.slice(2);
+const FORMATS = new Set(["table", "json", "markdown", "md"]);
 let format = "table";
 const targets = [];
 
@@ -37,7 +38,19 @@ if (args.includes("--help") || args.includes("-h")) {
   process.exit(0);
 }
 
-const files = await collectFiles(targets.length ? targets : [process.cwd()]);
+if (!FORMATS.has(format)) {
+  console.error(`Unsupported format "${format}". Use table, json, or markdown.`);
+  process.exit(1);
+}
+
+let files = [];
+try {
+  files = await collectFiles(targets.length ? targets : [process.cwd()]);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
+
 const report = analyzeFiles(files);
 
 if (format === "json") {
@@ -51,11 +64,18 @@ if (format === "json") {
 async function collectFiles(paths) {
   const found = [];
   for (const path of paths) {
-    const info = await stat(path);
+    let info;
+    try {
+      info = await stat(path);
+    } catch {
+      throw new Error(`Path not found: ${path}`);
+    }
     if (info.isDirectory()) {
       await walk(path, found);
     } else if (SUPPORTED.has(basename(path))) {
       found.push({ name: basename(path), path, content: await readFile(path, "utf8") });
+    } else {
+      throw new Error(`Unsupported manifest file: ${path}`);
     }
   }
   return found;
