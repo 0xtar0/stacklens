@@ -52,6 +52,10 @@ try {
 }
 
 const report = analyzeFiles(files);
+if (!report.summary.files) {
+  console.error("No supported manifest files found.");
+  process.exit(1);
+}
 
 if (format === "json") {
   console.log(JSON.stringify(report, null, 2));
@@ -94,22 +98,33 @@ async function walk(dir, found, depth = 0) {
 }
 
 function printTable(report) {
-  console.log(`StackLens analyzed ${report.summary.files} file(s), ${report.summary.dependencies} dependencies, ${report.summary.riskFlags} risk flag(s).\n`);
+  console.log(`StackLens analyzed ${report.summary.files} file(s), ${report.summary.dependencies} dependencies, ${report.summary.riskFlags} risk flag(s), ${report.summary.versionConflicts || 0} version conflict(s).\n`);
   const rows = report.dependencies.map((dep) => [
     dep.name,
     dep.ecosystem,
     dep.scope,
     dep.version || "-",
     dep.category,
-    dep.flags.join(", ") || "-"
+    dep.flags.join(", ") || "-",
+    (dep.sourceFiles || [dep.sourceFile]).join(", ")
   ]);
-  const headers = ["Name", "Eco", "Scope", "Version", "Category", "Flags"];
+  const headers = ["Name", "Eco", "Scope", "Version", "Category", "Flags", "Sources"];
   const widths = headers.map((head, index) => Math.max(head.length, ...rows.map((row) => row[index].length)));
   console.log(formatRow(headers, widths));
   console.log(widths.map((width) => "-".repeat(width)).join("  "));
   for (const row of rows) console.log(formatRow(row, widths));
+  if (report.conflicts.length) {
+    console.log("\nVersion conflicts:");
+    for (const conflict of report.conflicts) {
+      console.log(`- ${conflict.ecosystem}:${conflict.name} (${conflict.scope}) -> ${conflict.versions.map((item) => `${item.version || "unspecified"} from ${item.sources.join(", ")}`).join("; ")}`);
+    }
+  }
   console.log("\nRecommendations:");
   for (const item of report.recommendations) console.log(`- ${item}`);
+  if (report.warnings.length) {
+    console.log("\nWarnings:");
+    for (const item of report.warnings) console.log(`- ${item}`);
+  }
 }
 
 function formatRow(row, widths) {

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { analyzeFiles, exportMarkdown } from "../src/analyzer.js";
 
+const cliPath = new URL("../cli.mjs", import.meta.url).pathname;
+
 const report = analyzeFiles([
   {
     name: "package.json",
@@ -43,6 +45,7 @@ const markdown = exportMarkdown(report);
 assert.match(markdown, /StackLens Dependency Report/);
 assert.match(markdown, /express/);
 assert.match(markdown, /Recommendations/);
+assert.match(markdown, /Duplicate groups/);
 
 const lockReport = analyzeFiles([
   {
@@ -99,9 +102,39 @@ assert.equal(tomlReport.dependencies.find((dep) => dep.name === "serde").version
 assert.equal(tomlReport.dependencies.find((dep) => dep.name === "insta").scope, "development");
 assert.ok(tomlReport.dependencies.find((dep) => dep.name === "local-crate").flags.includes("local file dependency"));
 
+const conflictReport = analyzeFiles([
+  {
+    name: "package.json",
+    path: "packages/web/package.json",
+    content: JSON.stringify({ dependencies: { react: "^18.3.1" } })
+  },
+  {
+    name: "package.json",
+    path: "packages/admin/package.json",
+    content: JSON.stringify({ dependencies: { react: "^19.1.0" } })
+  },
+  {
+    name: "pom.xml",
+    path: "services/api/pom.xml",
+    content: "<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId><version>3.3.0</version></dependency></dependencies></project>"
+  },
+  {
+    name: "pom.xml",
+    path: "services/worker/pom.xml",
+    content: "<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId><version>3.4.0</version></dependency></dependencies></project>"
+  }
+]);
+
+assert.equal(conflictReport.summary.duplicateGroups, 2);
+assert.equal(conflictReport.summary.versionConflicts, 2);
+assert.ok(conflictReport.dependencies.find((dep) => dep.name === "react").flags.includes("version conflict"));
+assert.ok(conflictReport.dependencies.find((dep) => dep.name === "org.springframework.boot:spring-boot-starter-web").flags.includes("version conflict"));
+assert.deepEqual(conflictReport.dependencies.find((dep) => dep.name === "react").sourceFiles.sort(), ["packages/admin/package.json", "packages/web/package.json"]);
+assert.match(exportMarkdown(conflictReport), /Version Conflicts/);
+
 let cliError = null;
 try {
-  execFileSync(process.execPath, ["cli.mjs", "missing-manifest.json"], {
+  execFileSync(process.execPath, [cliPath, "missing-manifest.json"], {
     cwd: new URL("..", import.meta.url),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -111,5 +144,18 @@ try {
 }
 assert.equal(cliError?.status, 1);
 assert.match(cliError?.stderr, /Path not found: missing-manifest\.json/);
+
+let emptyCliError = null;
+try {
+  execFileSync(process.execPath, [cliPath, "."], {
+    cwd: new URL("fixtures/empty", import.meta.url),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+} catch (error) {
+  emptyCliError = error;
+}
+assert.equal(emptyCliError?.status, 1);
+assert.match(emptyCliError?.stderr, /No supported manifest files found/);
 
 console.log("analyzer tests passed");

@@ -75,6 +75,8 @@ const RISKY_RANGES = [
   ["remote dependency", /^(git\+|https?:\/\/|ssh:)/]
 ];
 
+const KEY_SEP = "\u0000";
+
 export function analyzeFiles(files) {
   const normalized = files
     .map((file) => ({ name: basename(file.name || file.path || ""), path: file.path || file.name || "", content: String(file.content || "") }))
@@ -90,7 +92,10 @@ export function analyzeFiles(files) {
     }
   }
 
-  const deduped = dedupe(dependencies).map(enrichDependency);
+  const duplicateSummary = inspectDuplicates(dependencies);
+  warnings.push(...duplicateSummary.warnings);
+
+  const deduped = dedupe(dependencies).map((dep) => enrichDependency(dep, duplicateSummary.conflictKeys));
   const categories = countBy(deduped, "category");
   const ecosystems = countBy(deduped, "ecosystem");
   const scopes = countBy(deduped, "scope");
@@ -108,8 +113,11 @@ export function analyzeFiles(files) {
       ecosystems,
       categories,
       scopes,
-      riskFlags: riskCount
+      riskFlags: riskCount,
+      duplicateGroups: duplicateSummary.duplicateGroups,
+      versionConflicts: duplicateSummary.conflicts.length
     },
+    conflicts: duplicateSummary.conflicts,
     warnings,
     recommendations: buildRecommendations(deduped, warnings)
   };
@@ -144,15 +152,24 @@ export function exportMarkdown(report) {
     `- Dependencies: ${report.summary.dependencies}`,
     `- Direct dependencies: ${report.summary.directDependencies}`,
     `- Risk flags: ${report.summary.riskFlags}`,
+    `- Duplicate groups: ${report.summary.duplicateGroups || 0}`,
+    `- Version conflicts: ${report.summary.versionConflicts || 0}`,
     "",
     `## Dependencies`,
     "",
-    `| Name | Ecosystem | Scope | Version | Category | Explanation | Flags |`,
-    `| --- | --- | --- | --- | --- | --- | --- |`
+    `| Name | Ecosystem | Scope | Version | Category | Sources | Explanation | Flags |`,
+    `| --- | --- | --- | --- | --- | --- | --- | --- |`
   ];
 
   for (const dep of report.dependencies) {
-    lines.push(`| ${escapePipe(dep.name)} | ${dep.ecosystem} | ${dep.scope} | ${escapePipe(dep.version || "")} | ${dep.category} | ${escapePipe(dep.explanation)} | ${escapePipe(dep.flags.join(", "))} |`);
+    lines.push(`| ${escapePipe(dep.name)} | ${dep.ecosystem} | ${dep.scope} | ${escapePipe(dep.version || "")} | ${dep.category} | ${escapePipe((dep.sourceFiles || [dep.sourceFile]).join(", "))} | ${escapePipe(dep.explanation)} | ${escapePipe(dep.flags.join(", "))} |`);
+  }
+
+  if (report.conflicts?.length) {
+    lines.push("", "## Version Conflicts", "");
+    for (const conflict of report.conflicts) {
+      lines.push(`- ${conflict.ecosystem}:${conflict.name} (${conflict.scope}) has ${conflict.versions.length} versions: ${conflict.versions.map((item) => `${item.version || "unspecified"} from ${item.sources.join(", ")}`).join("; ")}`);
+    }
   }
 
   if (report.recommendations.length) {
@@ -182,9 +199,9 @@ function parsePackageJson(file) {
   for (const [field, scope, direct] of fields) {
     const value = json[field];
     if (Array.isArray(value)) {
-      for (const name of value) deps.push(makeDep({ name, scope, ecosystem: "npm", sourceFile: file.name, direct }));
+      for (const name of value) deps.push(makeDep({ name, scope, ecosystem: "npm", sourceFile: sourcePath(file), direct }));
     } else if (value && typeof value === "object") {
-      for (const [name, version] of Object.entries(value)) deps.push(makeDep({ name, version, scope, ecosystem: "npm", sourceFile: file.name, direct }));
+      for (const [name, version] of Object.entries(value)) deps.push(makeDep({ name, version, scope, ecosystem: "npm", sourceFile: sourcePath(file), direct }));
     }
   }
   return deps;
@@ -203,12 +220,12 @@ function parsePackageLock(file) {
         version: meta.version || "",
         scope: meta.dev ? "development" : meta.optional ? "optional" : "locked",
         ecosystem: "npm",
-        sourceFile: file.name,
+        sourceFile: sourcePath(file),
         direct: false
       }));
     }
   } else if (json.dependencies && typeof json.dependencies === "object") {
-    walkLockDependencies(json.dependencies, deps, file.name);
+    walkLockDependencies(json.dependencies, deps, sourcePath(file));
   }
   return deps;
 }
@@ -220,7 +237,7 @@ function parseComposer(file) {
     const value = json[field] || {};
     for (const [name, version] of Object.entries(value)) {
       if (name === "php") continue;
-      deps.push(makeDep({ name, version, scope, ecosystem: "php", sourceFile: file.name, direct: true }));
+      deps.push(makeDep({ name, version, scope, ecosystem: "php", sourceFile: sourcePath(file), direct: true }));
     }
   }
   return deps;
@@ -231,27 +248,27 @@ function parseRequirements(file) {
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+#.*$/, "").trim())
     .filter((line) => line && !line.startsWith("#") && !line.startsWith("-"))
-    .map((line) => pythonSpecToDep(line, "runtime", file.name))
+    .map((line) => pythonSpecToDep(line, "runtime", sourcePath(file)))
     .filter(Boolean);
 }
 
 function parsePyproject(file) {
   const deps = [];
   const projectDeps = findArray(file.content, "dependencies");
-  for (const entry of projectDeps) deps.push(pythonSpecToDep(entry, "runtime", file.name));
+  for (const entry of projectDeps) deps.push(pythonSpecToDep(entry, "runtime", sourcePath(file)));
 
   for (const block of findTomlBlocks(file.content, "project.optional-dependencies")) {
     const scope = block.name.split(".").pop() || "optional";
-    for (const entry of findArraysInBlock(block.body)) deps.push(pythonSpecToDep(entry, scope, file.name));
+    for (const entry of findArraysInBlock(block.body)) deps.push(pythonSpecToDep(entry, scope, sourcePath(file)));
   }
 
   const poetryBlock = findNamedBlock(file.content, "tool.poetry.dependencies");
   if (poetryBlock) {
-    for (const dep of parseTomlAssignments(poetryBlock.body, "runtime", "python", file.name)) deps.push(dep);
+    for (const dep of parseTomlAssignments(poetryBlock.body, "runtime", "python", sourcePath(file))) deps.push(dep);
   }
   const poetryDevBlock = findNamedBlock(file.content, "tool.poetry.group.dev.dependencies") || findNamedBlock(file.content, "tool.poetry.dev-dependencies");
   if (poetryDevBlock) {
-    for (const dep of parseTomlAssignments(poetryDevBlock.body, "development", "python", file.name)) deps.push(dep);
+    for (const dep of parseTomlAssignments(poetryDevBlock.body, "development", "python", sourcePath(file))) deps.push(dep);
   }
   return deps.filter(Boolean);
 }
@@ -260,7 +277,7 @@ function parsePipfile(file) {
   const deps = [];
   for (const section of [["packages", "runtime"], ["dev-packages", "development"]]) {
     const block = findNamedBlock(file.content, section[0]);
-    if (block) deps.push(...parseTomlAssignments(block.body, section[1], "python", file.name));
+    if (block) deps.push(...parseTomlAssignments(block.body, section[1], "python", sourcePath(file)));
   }
   return deps;
 }
@@ -269,7 +286,7 @@ function parseCargo(file) {
   const deps = [];
   for (const [section, scope] of [["dependencies", "runtime"], ["dev-dependencies", "development"], ["build-dependencies", "build"]]) {
     const block = findNamedBlock(file.content, section);
-    if (block) deps.push(...parseTomlAssignments(block.body, scope, "rust", file.name));
+    if (block) deps.push(...parseTomlAssignments(block.body, scope, "rust", sourcePath(file)));
   }
   return deps;
 }
@@ -281,11 +298,11 @@ function parseGoMod(file) {
     for (const line of requireBlock[1].split(/\r?\n/)) {
       const clean = line.replace(/\/\/.*$/, "").trim();
       const [name, version] = clean.split(/\s+/);
-      if (name && version) deps.push(makeDep({ name, version, scope: "runtime", ecosystem: "go", sourceFile: file.name, direct: true }));
+      if (name && version) deps.push(makeDep({ name, version, scope: "runtime", ecosystem: "go", sourceFile: sourcePath(file), direct: true }));
     }
   }
   for (const match of file.content.matchAll(/^require\s+([^\s(]+)\s+(\S+)/gm)) {
-    deps.push(makeDep({ name: match[1], version: match[2], scope: "runtime", ecosystem: "go", sourceFile: file.name, direct: true }));
+    deps.push(makeDep({ name: match[1], version: match[2], scope: "runtime", ecosystem: "go", sourceFile: sourcePath(file), direct: true }));
   }
   return deps;
 }
@@ -293,7 +310,7 @@ function parseGoMod(file) {
 function parseGemfile(file) {
   const deps = [];
   for (const match of file.content.matchAll(/^\s*gem\s+["']([^"']+)["']\s*(?:,\s*["']([^"']+)["'])?/gm)) {
-    deps.push(makeDep({ name: match[1], version: match[2] || "", scope: "runtime", ecosystem: "ruby", sourceFile: file.name, direct: true }));
+    deps.push(makeDep({ name: match[1], version: match[2] || "", scope: "runtime", ecosystem: "ruby", sourceFile: sourcePath(file), direct: true }));
   }
   return deps;
 }
@@ -310,7 +327,7 @@ function parsePom(file) {
       version: tag(body, "version"),
       scope: tag(body, "scope") || "runtime",
       ecosystem: "maven",
-      sourceFile: file.name,
+      sourceFile: sourcePath(file),
       direct: true
     }));
   }
@@ -329,7 +346,7 @@ function parseGradle(file) {
       version,
       scope: match[1].toLowerCase().includes("test") ? "development" : "runtime",
       ecosystem: "gradle",
-      sourceFile: file.name,
+      sourceFile: sourcePath(file),
       direct: true
     }));
   }
@@ -340,17 +357,19 @@ function makeDep({ name, version = "", scope, ecosystem, sourceFile, direct }) {
   return { name: String(name).trim(), version: String(version || "").trim(), scope, ecosystem, sourceFile, direct: Boolean(direct) };
 }
 
-function enrichDependency(dep) {
+function enrichDependency(dep, conflictKeys = new Set()) {
   const key = dep.name.toLowerCase();
   const shortKey = key.split("/").pop().replace(/[-.]/g, "_");
   const known = KNOWN[key] || KNOWN[shortKey];
   const category = known?.[1] || inferCategory(dep.name);
   const explanation = known?.[0] || explainByName(dep.name, category, dep.ecosystem);
+  const flags = flagsFor(dep);
+  if (conflictKeys.has(dependencyKey(dep))) flags.push("version conflict");
   return {
     ...dep,
     category,
     explanation,
-    flags: flagsFor(dep),
+    flags,
     confidence: known ? "known package" : "name heuristic"
   };
 }
@@ -404,6 +423,9 @@ function buildRecommendations(deps, warnings) {
   if (warnings.length) {
     recommendations.push("Fix parser warnings so the report covers every manifest completely.");
   }
+  if (deps.some((dep) => dep.flags.includes("version conflict"))) {
+    recommendations.push("Resolve conflicting versions before upgrading or pruning dependencies.");
+  }
   if (!recommendations.length) {
     recommendations.push("No urgent dependency hygiene issues found from manifest metadata.");
   }
@@ -428,11 +450,82 @@ function basename(path) {
 function dedupe(dependencies) {
   const map = new Map();
   for (const dep of dependencies.filter((item) => item.name)) {
-    const key = `${dep.ecosystem}:${dep.name}:${dep.scope}`;
+    const key = dependencyKey(dep);
     const existing = map.get(key);
-    if (!existing || (!existing.direct && dep.direct)) map.set(key, dep);
+    if (!existing) {
+      map.set(key, withAggregateMetadata(dep));
+    } else {
+      const merged = mergeAggregateMetadata(existing, dep);
+      if (!existing.direct && dep.direct) {
+        map.set(key, mergeAggregateMetadata({ ...dep }, merged));
+      } else {
+        map.set(key, merged);
+      }
+    }
   }
   return [...map.values()].sort((a, b) => a.ecosystem.localeCompare(b.ecosystem) || a.name.localeCompare(b.name));
+}
+
+function sourcePath(file) {
+  return file.path || file.name;
+}
+
+function dependencyKey(dep) {
+  return [dep.ecosystem, dep.name, dep.scope].join(KEY_SEP);
+}
+
+function withAggregateMetadata(dep) {
+  return {
+    ...dep,
+    sourceFiles: dep.sourceFile ? [dep.sourceFile] : [],
+    versions: dep.version ? [dep.version] : []
+  };
+}
+
+function mergeAggregateMetadata(base, dep) {
+  const sourceFiles = unique([...(base.sourceFiles || []), base.sourceFile, ...(dep.sourceFiles || []), dep.sourceFile].filter(Boolean));
+  const versions = unique([...(base.versions || []), base.version, ...(dep.versions || []), dep.version].filter(Boolean));
+  return { ...base, sourceFiles, versions };
+}
+
+function inspectDuplicates(dependencies) {
+  const groups = new Map();
+  for (const dep of dependencies.filter((item) => item.name)) {
+    const key = dependencyKey(dep);
+    const list = groups.get(key) || [];
+    list.push(dep);
+    groups.set(key, list);
+  }
+
+  const warnings = [];
+  const conflicts = [];
+  const conflictKeys = new Set();
+  let duplicateGroups = 0;
+
+  for (const [key, group] of groups.entries()) {
+    if (group.length < 2) continue;
+    duplicateGroups += 1;
+    const byVersion = new Map();
+    for (const dep of group) {
+      const version = dep.version || "";
+      const sources = byVersion.get(version) || [];
+      sources.push(dep.sourceFile);
+      byVersion.set(version, sources);
+    }
+    if (byVersion.size > 1) {
+      const [ecosystem, name, scope] = key.split(KEY_SEP);
+      const versions = [...byVersion.entries()].map(([version, sources]) => ({ version, sources: unique(sources) }));
+      conflicts.push({ ecosystem, name, scope, versions });
+      conflictKeys.add(key);
+      warnings.push(`Version conflict for ${ecosystem}:${name} (${scope}): ${versions.map((item) => `${item.version || "unspecified"} from ${item.sources.join(", ")}`).join("; ")}.`);
+    }
+  }
+
+  return { duplicateGroups, conflicts, conflictKeys, warnings };
+}
+
+function unique(values) {
+  return [...new Set(values)];
 }
 
 function countBy(items, key) {

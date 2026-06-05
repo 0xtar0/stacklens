@@ -25,6 +25,8 @@ const elements = {
   ecosystemFilter: document.querySelector("#ecosystemFilter"),
   riskOnly: document.querySelector("#riskOnly"),
   recommendations: document.querySelector("#recommendations"),
+  warningSection: document.querySelector("#warningSection"),
+  warnings: document.querySelector("#warnings"),
   resultCaption: document.querySelector("#resultCaption"),
   cardsView: document.querySelector("#cardsView"),
   tableView: document.querySelector("#tableView"),
@@ -133,6 +135,8 @@ function render() {
   fillSelect(elements.categoryFilter, "All categories", Object.keys(summary.categories));
   fillSelect(elements.ecosystemFilter, "All ecosystems", Object.keys(summary.ecosystems));
   elements.recommendations.innerHTML = state.report.recommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  elements.warningSection.classList.toggle("hidden", !state.report.warnings.length);
+  elements.warnings.innerHTML = state.report.warnings.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   renderResults();
 }
 
@@ -144,7 +148,7 @@ function renderResults() {
 
   if (!deps.length) {
     elements.cardsView.innerHTML = `<div class="empty-state">No dependencies match the current filters.</div>`;
-    elements.dependencyTable.innerHTML = `<tr><td colspan="5">No dependencies match the current filters.</td></tr>`;
+    elements.dependencyTable.innerHTML = `<tr><td colspan="6">No dependencies match the current filters.</td></tr>`;
     return;
   }
 
@@ -162,6 +166,7 @@ function renderResults() {
         <span class="chip">${escapeHtml(dep.ecosystem)}</span>
         <span class="chip">${escapeHtml(dep.scope)}</span>
         <span class="chip">${escapeHtml(dep.confidence)}</span>
+        <span class="chip">${escapeHtml(sourceLabel(dep))}</span>
         ${dep.flags.map((flag) => `<span class="chip flag">${escapeHtml(flag)}</span>`).join("")}
       </div>
     </article>
@@ -174,6 +179,7 @@ function renderResults() {
       <td>${escapeHtml(dep.scope)}</td>
       <td>${escapeHtml(dep.category)}</td>
       <td>${escapeHtml(dep.flags.join(", ") || "-")}</td>
+      <td>${escapeHtml((dep.sourceFiles || [dep.sourceFile]).join(", "))}</td>
     </tr>
   `).join("");
 }
@@ -201,6 +207,11 @@ function download(filename, content, type) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+function sourceLabel(dep) {
+  const count = (dep.sourceFiles || [dep.sourceFile]).filter(Boolean).length;
+  return count === 1 ? "1 source" : `${count} sources`;
 }
 
 function escapeHtml(value) {
