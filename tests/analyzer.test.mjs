@@ -102,6 +102,30 @@ assert.equal(tomlReport.dependencies.find((dep) => dep.name === "serde").version
 assert.equal(tomlReport.dependencies.find((dep) => dep.name === "insta").scope, "development");
 assert.ok(tomlReport.dependencies.find((dep) => dep.name === "local-crate").flags.includes("local file dependency"));
 
+const pyprojectReport = analyzeFiles([
+  {
+    name: "pyproject.toml",
+    content: [
+      "[project]",
+      "dependencies = [",
+      "  \"uvicorn[standard]>=0.30\",",
+      "  \"requests>=2\",",
+      "]",
+      "",
+      "[project.optional-dependencies]",
+      "dev = [\"pytest[testing]==8.3\"]",
+      "docs = [",
+      "  \"mkdocs>=1.6\",",
+      "]"
+    ].join("\n")
+  }
+]);
+
+assert.equal(pyprojectReport.summary.dependencies, 4);
+assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "uvicorn").version, ">=0.30");
+assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "pytest").scope, "dev");
+assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "mkdocs").scope, "docs");
+
 const conflictReport = analyzeFiles([
   {
     name: "package.json",

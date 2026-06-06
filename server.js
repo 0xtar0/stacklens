@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL(".", import.meta.url));
+const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
 
@@ -17,9 +17,13 @@ const types = {
 };
 
 function resolvePath(url) {
-    const pathname = new URL(url, `http://${host}:${port}`).pathname;
-  const clean = normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, "");
-  return join(root, clean === "/" ? "index.html" : clean);
+  const pathname = new URL(url, `http://${host}:${port}`).pathname;
+  const target = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  const resolved = resolve(root, target);
+  if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) {
+    throw new Error("Refusing to serve files outside the project root");
+  }
+  return resolved;
 }
 
 createServer(async (req, res) => {

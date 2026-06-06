@@ -254,11 +254,19 @@ function parseRequirements(file) {
 
 function parsePyproject(file) {
   const deps = [];
-  const projectDeps = findArray(file.content, "dependencies");
+  const projectBlock = findNamedBlock(file.content, "project");
+  const projectDeps = findArray(projectBlock?.body || file.content, "dependencies");
   for (const entry of projectDeps) deps.push(pythonSpecToDep(entry, "runtime", sourcePath(file)));
 
-  for (const block of findTomlBlocks(file.content, "project.optional-dependencies")) {
-    const scope = block.name.split(".").pop() || "optional";
+  const optionalBlock = findNamedBlock(file.content, "project.optional-dependencies");
+  if (optionalBlock) {
+    for (const group of findTomlArrayAssignments(optionalBlock.body)) {
+      for (const entry of group.values) deps.push(pythonSpecToDep(entry, group.key, sourcePath(file)));
+    }
+  }
+
+  for (const block of findTomlBlocks(file.content, "project.optional-dependencies.")) {
+    const scope = block.name.replace("project.optional-dependencies.", "") || "optional";
     for (const entry of findArraysInBlock(block.body)) deps.push(pythonSpecToDep(entry, scope, sourcePath(file)));
   }
 
@@ -566,21 +574,83 @@ function findTomlBlocks(content, prefix) {
 }
 
 function findArray(content, key) {
-  const pattern = new RegExp(`^\\s*${key}\\s*=\\s*\\[([\\s\\S]*?)\\]`, "m");
-  const match = content.match(pattern);
-  return match ? parseQuotedArray(match[1]) : [];
+  return findTomlArrayAssignments(content).find((assignment) => assignment.key === key)?.values || [];
 }
 
 function findArraysInBlock(block) {
-  const entries = [];
-  for (const match of block.matchAll(/=\s*\[([\s\S]*?)\]/g)) {
-    entries.push(...parseQuotedArray(match[1]));
+  return findTomlArrayAssignments(block).flatMap((assignment) => assignment.values);
+}
+
+function findTomlArrayAssignments(content) {
+  const assignments = [];
+  const pattern = /^\s*([A-Za-z0-9_.-]+)\s*=\s*\[/gm;
+  for (const match of content.matchAll(pattern)) {
+    const start = content.indexOf("[", match.index);
+    const end = findTomlArrayEnd(content, start);
+    if (end === -1) continue;
+    assignments.push({ key: match[1], values: parseQuotedArray(content.slice(start + 1, end)) });
   }
-  return entries;
+  return assignments;
+}
+
+function findTomlArrayEnd(content, start) {
+  let depth = 0;
+  let quote = "";
+  let escaped = false;
+
+  for (let index = start; index < content.length; index += 1) {
+    const char = content[index];
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (char === "\"" || char === "'") {
+      quote = char;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  return -1;
 }
 
 function parseQuotedArray(body) {
-  return [...body.matchAll(/["']([^"']+)["']/g)].map((match) => match[1]);
+  const values = [];
+  let quote = "";
+  let escaped = false;
+  let value = "";
+
+  for (const char of body) {
+    if (!quote) {
+      if (char === "\"" || char === "'") {
+        quote = char;
+        value = "";
+      }
+      continue;
+    }
+    if (escaped) {
+      value += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === quote) {
+      values.push(value);
+      quote = "";
+    } else {
+      value += char;
+    }
+  }
+
+  return values;
 }
 
 function pythonSpecToDep(spec, scope, sourceFile) {
