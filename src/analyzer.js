@@ -305,15 +305,23 @@ function parseGoMod(file) {
   const requireBlock = file.content.match(/require\s*\(([\s\S]*?)\)/);
   if (requireBlock) {
     for (const line of requireBlock[1].split(/\r?\n/)) {
-      const clean = line.replace(/\/\/.*$/, "").trim();
-      const [name, version] = clean.split(/\s+/);
-      if (name && version) deps.push(makeDep({ name, version, scope: "runtime", ecosystem: "go", sourceFile: sourcePath(file), direct: true }));
+      const dep = parseGoRequireLine(line, sourcePath(file));
+      if (dep) deps.push(dep);
     }
   }
-  for (const match of file.content.matchAll(/^require\s+([^\s(]+)\s+(\S+)/gm)) {
-    deps.push(makeDep({ name: match[1], version: match[2], scope: "runtime", ecosystem: "go", sourceFile: sourcePath(file), direct: true }));
+  for (const match of file.content.matchAll(/^require\s+([^\s(]+)\s+(\S+)(?:\s+\/\/\s*(.*))?/gm)) {
+    const indirect = /\bindirect\b/.test(match[3] || "");
+    deps.push(makeDep({ name: match[1], version: match[2], scope: indirect ? "indirect" : "runtime", ecosystem: "go", sourceFile: sourcePath(file), direct: !indirect }));
   }
   return deps;
+}
+
+function parseGoRequireLine(line, sourceFile) {
+  const indirect = /\/\/\s*indirect\b/.test(line);
+  const clean = line.replace(/\/\/.*$/, "").trim();
+  const [name, version] = clean.split(/\s+/);
+  if (!name || !version) return null;
+  return makeDep({ name, version, scope: indirect ? "indirect" : "runtime", ecosystem: "go", sourceFile, direct: !indirect });
 }
 
 function parseGemfile(file) {
@@ -353,13 +361,28 @@ function parseGradle(file) {
     deps.push(makeDep({
       name,
       version,
-      scope: match[1].toLowerCase().includes("test") ? "development" : "runtime",
+      scope: gradleScope(match[1]),
+      ecosystem: "gradle",
+      sourceFile: sourcePath(file),
+      direct: true
+    }));
+  }
+  const mapPattern = /^\s*(implementation|api|compileOnly|runtimeOnly|testImplementation|testRuntimeOnly)\s*\(?\s*group:\s*["']([^"']+)["']\s*,\s*name:\s*["']([^"']+)["'](?:\s*,\s*version:\s*["']([^"']+)["'])?/gm;
+  for (const match of file.content.matchAll(mapPattern)) {
+    deps.push(makeDep({
+      name: `${match[2]}:${match[3]}`,
+      version: match[4] || "",
+      scope: gradleScope(match[1]),
       ecosystem: "gradle",
       sourceFile: sourcePath(file),
       direct: true
     }));
   }
   return deps;
+}
+
+function gradleScope(configuration) {
+  return configuration.toLowerCase().includes("test") ? "development" : "runtime";
 }
 
 function makeDep({ name, version = "", scope, ecosystem, sourceFile, direct }) {

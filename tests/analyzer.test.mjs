@@ -24,7 +24,7 @@ const report = analyzeFiles([
   },
   {
     name: "go.mod",
-    content: "module example\n\nrequire (\n  github.com/gin-gonic/gin v1.10.0\n)\n"
+    content: "module example\n\nrequire (\n  github.com/gin-gonic/gin v1.10.0\n  github.com/pkg/errors v0.9.1 // indirect\n)\n"
   },
   {
     name: "pom.xml",
@@ -33,11 +33,13 @@ const report = analyzeFiles([
 ]);
 
 assert.equal(report.summary.files, 4);
-assert.equal(report.summary.dependencies, 8);
+assert.equal(report.summary.dependencies, 9);
 assert.equal(report.summary.ecosystems.npm, 4);
 assert.equal(report.summary.ecosystems.python, 2);
 assert.equal(report.dependencies.find((dep) => dep.name === "react").category, "frontend");
 assert.equal(report.dependencies.find((dep) => dep.name === "fastapi").category, "backend");
+assert.equal(report.dependencies.find((dep) => dep.name === "github.com/pkg/errors").scope, "indirect");
+assert.equal(report.dependencies.find((dep) => dep.name === "github.com/pkg/errors").direct, false);
 assert.ok(report.dependencies.find((dep) => dep.name === "express").flags.includes("latest tag"));
 assert.ok(report.dependencies.find((dep) => dep.name === "eslint").flags.includes("tooling package in runtime scope"));
 
@@ -117,6 +119,22 @@ const tomlReport = analyzeFiles([
 assert.equal(tomlReport.dependencies.find((dep) => dep.name === "serde").version, "1.0");
 assert.equal(tomlReport.dependencies.find((dep) => dep.name === "insta").scope, "development");
 assert.ok(tomlReport.dependencies.find((dep) => dep.name === "local-crate").flags.includes("local file dependency"));
+
+const gradleReport = analyzeFiles([
+  {
+    name: "build.gradle",
+    content: [
+      "dependencies {",
+      "  implementation group: 'org.springframework.boot', name: 'spring-boot-starter-web', version: '3.3.0'",
+      "  testImplementation group: 'junit', name: 'junit', version: '4.13.2'",
+      "}"
+    ].join("\n")
+  }
+]);
+
+assert.equal(gradleReport.summary.dependencies, 2);
+assert.equal(gradleReport.dependencies.find((dep) => dep.name === "org.springframework.boot:spring-boot-starter-web").version, "3.3.0");
+assert.equal(gradleReport.dependencies.find((dep) => dep.name === "junit:junit").scope, "development");
 
 const pyprojectReport = analyzeFiles([
   {
