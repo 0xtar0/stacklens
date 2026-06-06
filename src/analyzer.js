@@ -70,7 +70,7 @@ const CATEGORY_RULES = [
 const RISKY_RANGES = [
   ["latest tag", /\blatest\b/i],
   ["wildcard version", /(^|\s|[<>=~^])[*xX](\.|$)/],
-  ["unpinned version", /^(>=|>|<=|<)/],
+  ["unpinned version", /^(~=|!=|>=|>|<=|<)/],
   ["local file dependency", /^(file:|link:|workspace:)/],
   ["remote dependency", /^(git\+|https?:\/\/|ssh:)/]
 ];
@@ -214,7 +214,8 @@ function parsePackageLock(file) {
   if (json.packages && typeof json.packages === "object") {
     for (const [path, meta] of Object.entries(json.packages)) {
       if (!path.startsWith("node_modules/")) continue;
-      const name = path.replace(/^node_modules\//, "");
+      const name = packageNameFromNodeModulesPath(path);
+      if (!name) continue;
       deps.push(makeDep({
         name,
         version: meta.version || "",
@@ -479,7 +480,17 @@ function sourcePath(file) {
 }
 
 function dependencyKey(dep) {
-  return [dep.ecosystem, dep.name, dep.scope].join(KEY_SEP);
+  return [dep.ecosystem, canonicalName(dep), dep.scope].join(KEY_SEP);
+}
+
+function canonicalName(dep) {
+  if (dep.ecosystem === "python") {
+    return dep.name.toLowerCase().replace(/[-_.]+/g, "-");
+  }
+  if (["npm", "php", "ruby"].includes(dep.ecosystem)) {
+    return dep.name.toLowerCase();
+  }
+  return dep.name;
 }
 
 function withAggregateMetadata(dep) {
@@ -693,6 +704,16 @@ function walkLockDependencies(tree, deps, sourceFile) {
       walkLockDependencies(meta.dependencies, deps, sourceFile);
     }
   }
+}
+
+function packageNameFromNodeModulesPath(path) {
+  const parts = path.split("/");
+  const index = parts.lastIndexOf("node_modules");
+  if (index === -1 || !parts[index + 1]) return "";
+  if (parts[index + 1].startsWith("@") && parts[index + 2]) {
+    return `${parts[index + 1]}/${parts[index + 2]}`;
+  }
+  return parts[index + 1];
 }
 
 function normalizeTomlVersion(value) {

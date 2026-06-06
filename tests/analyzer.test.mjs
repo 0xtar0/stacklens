@@ -69,6 +69,22 @@ assert.equal(lockReport.summary.dependencies, 3);
 assert.equal(lockReport.dependencies.find((dep) => dep.name === "eslint").scope, "development");
 assert.equal(lockReport.dependencies.find((dep) => dep.name === "uuid").scope, "optional");
 
+const nestedLockReport = analyzeFiles([
+  {
+    name: "package-lock.json",
+    content: JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/a": { version: "1.0.0" },
+        "node_modules/a/node_modules/b": { version: "2.0.0" },
+        "node_modules/a/node_modules/@scope/c": { version: "3.0.0" }
+      }
+    })
+  }
+]);
+
+assert.deepEqual(nestedLockReport.dependencies.map((dep) => dep.name).sort(), ["@scope/c", "a", "b"]);
+
 const pythonReport = analyzeFiles([
   {
     name: "requirements.txt",
@@ -125,6 +141,26 @@ assert.equal(pyprojectReport.summary.dependencies, 4);
 assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "uvicorn").version, ">=0.30");
 assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "pytest").scope, "dev");
 assert.equal(pyprojectReport.dependencies.find((dep) => dep.name === "mkdocs").scope, "docs");
+
+const normalizedPythonReport = analyzeFiles([
+  {
+    name: "requirements.txt",
+    path: "apps/api/requirements.txt",
+    content: "Django~=5.0"
+  },
+  {
+    name: "requirements.txt",
+    path: "apps/admin/requirements.txt",
+    content: "django==5.0.4"
+  }
+]);
+
+assert.equal(normalizedPythonReport.summary.dependencies, 1);
+assert.equal(normalizedPythonReport.summary.duplicateGroups, 1);
+assert.equal(normalizedPythonReport.summary.versionConflicts, 1);
+assert.ok(normalizedPythonReport.dependencies[0].flags.includes("unpinned version"));
+assert.ok(normalizedPythonReport.dependencies[0].flags.includes("version conflict"));
+assert.deepEqual(normalizedPythonReport.dependencies[0].sourceFiles.sort(), ["apps/admin/requirements.txt", "apps/api/requirements.txt"]);
 
 const conflictReport = analyzeFiles([
   {
